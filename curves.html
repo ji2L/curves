@@ -1,0 +1,352 @@
+<!doctype html>
+<html>
+<head>
+<link rel="stylesheet" type="text/css" media="all" href="css/reset.css" />
+<script type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
+<script type="text/javascript" src="index-umd.js"></script>
+<script>
+  var ShapeInfo = KldIntersections.ShapeInfo;
+  var Intersection = KldIntersections.Intersection;
+</script>
+
+<style>
+    body{background-color: black;}
+    #wrapper{position:absolute; top:50px; left:560px}
+	#textDiv{position:absolute; top:50px; left:560px}
+    #gameCanvas, #cursorCanvas{position:absolute; cursor:none;}
+    #gameCanvas{border:1px solid red;}
+</style>
+
+<script>
+$(function(){
+
+	//Cursor context declaration
+    var cursorCanvas=document.getElementById("cursorCanvas");
+    var cursorContext=cursorCanvas.getContext("2d");
+    var $cursorCanvas=$("#cursorCanvas");
+	
+	//Game context declaration
+	var gameCanvas = document.getElementById("gameCanvas");
+	var gameContext = gameCanvas.getContext("2d");
+	
+	//Text context declaration
+	var textCanvas = document.getElementById("textCanvas");
+	var textContext = textCanvas.getContext("2d");
+	
+	//Text constants declaration
+	const INFO_TEXT_COLOR = "green";
+	
+	const INFO_POS_X = 820;
+	
+	const TIMER_TEXT_POS_Y = 50;
+	const TIMER_TEXT_SIZE = 40;
+	
+	const TIME_LEFT_POS_Y = 150;
+	const TIME_LEFT_SIZE = 60;
+	
+	const SCORE_TEXT_POS_Y = 400;
+	const SCORE_TEXT_SIZE = 40;
+	
+	const SCORE_POS_Y = 500;
+	const SCORE_SIZE = 60;
+	
+	const GAME_OVER_POS_X = 100;
+	const GAME_OVER_POS_Y = 300;
+	const GAME_OVER_SIZE = 100;
+	
+	const RESTART_TEXT_POS_X = 150;
+	const RESTART_TEXT_POS_Y = 360;
+	const RESTART_TEXT_SIZE = 50;
+	
+	//Game constants declaration
+	const MIN_GAP = 20;
+	const MAX_GAP = gameCanvas.width - MIN_GAP;
+	
+	const ACTIVE_COLOR = "#00FFFF";
+	const INACTIVE_COLOR = "#FFFF00";
+	const START_INDICATOR_COLOR = "#FF0000";
+	const CURSOR_COLOR = "#FF00FF";
+	
+	const ACTIVE_CURVE_WIDTH = 2;
+	const INACTIVE_CURVE_WIDTH = 1;
+	const START_INDICATOR_WIDTH = 2;
+	const CURSOR_WIDTH = 2;
+	
+	const START_INDICATOR_RADIUS = 7;
+	const CURSOR_RADIUS = 20;
+
+	const MIN_ANGLE = 10; //degrees
+	
+	const DURATION = 30; //seconds
+
+	//Cursor canvas offsets declaration
+    var canvasOffset=$cursorCanvas.offset();
+    var offsetX=canvasOffset.left;
+    var offsetY=canvasOffset.top;
+	
+	//Game canvas variables declaration
+	var playing = false;
+	var lost = false;
+	var slipped = false;
+	
+	var score = 0;
+	
+	var activeStartPointX;
+	var activeStartPointY;
+	var activeEndPointX;
+	var activeEndPointY;
+	var activeCPX;
+	var activeCPY;
+	var inactiveEndPointX;
+	var inactiveEndPointY;
+	var inactiveCPX;
+	var inactiveCPY;
+	
+	var lostPosX;
+	var lostPosY;
+	
+	var timeLeft;
+    
+    var timerId = setInterval(countdown, 1000);
+	
+	initGame();
+	
+	$("#cursorCanvas").mousemove(function(e){handleMouseMove(e);});
+	window.addEventListener("keypress", restart, false);
+
+    function handleMouseMove(e){
+		e.preventDefault();
+		e.stopPropagation();
+		
+		mouseX=parseInt(e.clientX-offsetX);
+		mouseY=parseInt(e.clientY-offsetY);
+		
+		//Draw circle cursor
+		cursorContext.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+		drawCircle(cursorContext, mouseX, mouseY, CURSOR_RADIUS, CURSOR_COLOR, CURSOR_WIDTH);
+		
+		//When the start indicator is inside the cursor, the game starts
+		if(!playing && !lost && distance(mouseX, mouseY, activeStartPointX, activeStartPointY) <= CURSOR_RADIUS){
+			playing = true;
+		}
+		
+		//When the active end point is inside the cursor, the active curve is completed
+		if(playing && !lost && distance(mouseX, mouseY, activeEndPointX, activeEndPointY) <= CURSOR_RADIUS){
+			score++;
+			swapActive();
+			rollInactiveCurve();
+			gameContext.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+			drawGame();
+			drawInfo();
+		}
+		
+		const activeCurve = ShapeInfo.quadraticBezier(activeStartPointX, activeStartPointY, activeCPX, activeCPY, activeEndPointX, activeEndPointY);
+		const cursorCircle = ShapeInfo.circle(mouseX, mouseY, CURSOR_RADIUS);
+		const intersections = Intersection.intersect(activeCurve, cursorCircle);
+		
+		//When there is no intersection beween the cursor and the active curve, the player slipped and lost
+		if(playing && !lost && intersections.points.length == 0){
+			drawGameOver();
+			lost = true;
+			slipped = true;
+			playing = false;
+			lostPosX = mouseX;
+			lostPosY = mouseY;
+			drawGame();
+		}
+    }
+	
+	//Only count down when playing
+	function countdown() {
+		if (timeLeft == 0) {
+			drawGameOver();
+			lost = true;
+			playing = false;
+			drawGame();
+		} else {
+			if(playing){
+				timeLeft--;
+				drawInfo();
+			}
+		}
+    }
+	
+	function initGame(){
+		//Clear canvas
+		gameContext.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+		textContext.clearRect(0, 0, textCanvas.width, textCanvas.height);
+		
+		playing = false;
+		lost = false;
+		slipped = false;
+		score = 0;
+		timeLeft = DURATION;
+		rollActiveCurve();
+		rollInactiveCurve();
+		drawGame();
+		drawInfo();
+	}
+	
+	function restart(){
+		if(lost){
+			initGame();
+		}
+	}
+	
+	//Rolls the active curve parameters
+	//Only called in initGame because swapActive is used to get new
+	//parameters for the active curve
+	function rollActiveCurve(){
+		activeStartPointX = random(MIN_GAP, MAX_GAP);
+		activeStartPointY = random(MIN_GAP, MAX_GAP);
+	
+		activeEndPointX = random(MIN_GAP, MAX_GAP);
+		activeEndPointY = random(MIN_GAP, MAX_GAP);
+	
+		//To prevent generating pointy curves, reroll the control point
+		//coordinates if the angle it makes with the start and end point is
+		//too sharp
+		activeCPX = random(MIN_GAP, MAX_GAP);
+		activeCPY = random(MIN_GAP, MAX_GAP);
+		while(angle(activeCPX, activeCPY, activeStartPointX, activeStartPointY, activeEndPointX, activeEndPointY) <= MIN_ANGLE){
+			activeCPX = random(MIN_GAP, MAX_GAP);
+			activeCPY = random(MIN_GAP, MAX_GAP);
+		}
+	}
+	
+	//Rolls the inactive curve parameters
+	function rollInactiveCurve(){
+		inactiveEndPointX = random(MIN_GAP, MAX_GAP);
+		inactiveEndPointY = random(MIN_GAP, MAX_GAP);
+	
+		inactiveCPX = random(MIN_GAP, MAX_GAP);
+		inactiveCPY = random(MIN_GAP, MAX_GAP);
+		while(angle(inactiveCPX, inactiveCPY, activeEndPointX, activeEndPointY, inactiveEndPointX, inactiveEndPointY) <= MIN_ANGLE){
+			inactiveCPX = random(MIN_GAP, MAX_GAP);
+			inactiveCPY = random(MIN_GAP, MAX_GAP);
+		}
+	}
+	
+	//Swaps the parameters of the previously inactive curve so it becomes
+	//the new active curve
+	function swapActive(){
+		activeStartPointX = activeEndPointX;
+		activeStartPointY = activeEndPointY;
+		
+		activeEndPointX = inactiveEndPointX;
+		activeEndPointY = inactiveEndPointY;
+		
+		activeCPX = inactiveCPX;
+		activeCPY = inactiveCPY;
+	}
+	
+	function drawGame(){
+		//Draw start indicator
+		if(!playing && !lost){
+			drawCircle(gameContext, activeStartPointX, activeStartPointY, 
+				START_INDICATOR_RADIUS, START_INDICATOR_COLOR, 
+				START_INDICATOR_WIDTH);
+		}
+
+		//Draw active curve
+		drawCurve(activeStartPointX, activeStartPointY, activeEndPointX, 
+			activeEndPointY, activeCPX, activeCPY, ACTIVE_COLOR, 
+			ACTIVE_CURVE_WIDTH);
+
+		//Draw inactive curve
+		drawCurve(activeEndPointX, activeEndPointY, 
+			inactiveEndPointX, inactiveEndPointY, inactiveCPX, 
+			inactiveCPY, INACTIVE_COLOR, INACTIVE_CURVE_WIDTH);
+			
+		//Draw lost indicator
+		if(slipped){
+			drawCircle(gameContext, lostPosX, lostPosY, CURSOR_RADIUS, CURSOR_COLOR, 
+				CURSOR_WIDTH);
+		}
+	}
+	
+	function drawInfo(){
+		//Clear the canvas
+		textContext.clearRect(0, 0, textCanvas.width, textCanvas.height);
+		
+		//Draw timer info
+		drawText(INFO_POS_X, TIMER_TEXT_POS_Y, INFO_TEXT_COLOR, TIMER_TEXT_SIZE, "TIMER");
+		if(timeLeft < 0){
+			drawText(INFO_POS_X, TIME_LEFT_POS_Y, INFO_TEXT_COLOR, TIME_LEFT_SIZE, "0");
+		} else {
+			drawText(INFO_POS_X, TIME_LEFT_POS_Y, INFO_TEXT_COLOR, TIME_LEFT_SIZE, timeLeft);
+		}
+		
+		//Draw score info
+		drawText(INFO_POS_X, SCORE_TEXT_POS_Y, INFO_TEXT_COLOR, SCORE_TEXT_SIZE, "SCORE");
+		drawText(INFO_POS_X, SCORE_POS_Y, INFO_TEXT_COLOR, SCORE_SIZE, score);
+	}
+	
+	function drawGameOver(){
+		drawText(GAME_OVER_POS_X, GAME_OVER_POS_Y, INFO_TEXT_COLOR, GAME_OVER_SIZE, "GAME OVER");
+		drawText(RESTART_TEXT_POS_X, RESTART_TEXT_POS_Y, INFO_TEXT_COLOR, RESTART_TEXT_SIZE, "Press any key to restart");
+	}
+	
+	function drawCurve(startX, startY, endX, endY, cpX, cpY, color, width){
+		gameContext.beginPath();
+		gameContext.lineWidth = width;
+		gameContext.strokeStyle = color;
+		gameContext.moveTo(startX, startY);
+		gameContext.quadraticCurveTo(cpX, cpY, endX, endY);
+		gameContext.stroke();
+	}
+	
+	function drawCircle(context, posX, posY, radius, color, width){
+		context.beginPath();
+		context.lineWidth = width;
+		context.strokeStyle = color;
+		context.arc(posX, posY, radius, 0, 2*Math.PI);
+		context.stroke();
+		context.stroke();
+	}
+	
+	function drawText(posX, posY, color, size, text){
+		textContext.font = size + "px Arial";
+		textContext.fillStyle = color;
+		textContext.fillText(text, posX, posY);
+	}
+	
+	//Returns the distance between 2 points : A(xA, yA) and B(xB, yB)
+	function distance(xA, yA, xB, yB){
+		return Math.sqrt((xB - xA)**2 + (yB - yA)**2);
+	}
+	
+	//Returns a random number between min and max
+	function random(min, max){
+		return Math.floor((Math.random() * max) + min);
+	}
+	
+	//Returns the scalar product of vector A = (xA, yA) and B = (xB, yB)
+	function scalarProduct(xA, yA, xB, yB){
+		return xA * xB + yA * yB;
+	}
+	
+	//Returns the value (in degrees) of the angle BAC
+	function angle(xA, yA, xB, yB, xC, yC){
+		var xAB = xB - xA;
+		var yAB = yB - yA;
+		var xAC = xC - xA;
+		var yAC = yC - yA;
+		
+		return Math.acos(scalarProduct(xAB, yAB, xAC, yAC)/(Math.sqrt(xAB**2 + yAB**2)*Math.sqrt(xAC**2 + yAC**2))) * 180 / Math.PI;
+	}
+}); // end $(function(){});
+</script>
+
+</head>
+
+<body>
+	<div id="textDiv">
+		<canvas id="textCanvas" width=1200 height = 800></canvas>
+	</div>
+    <div id='wrapper'>
+        <canvas id="gameCanvas" width=800 height=800></canvas>
+        <canvas id="cursorCanvas" width=800 height=800></canvas>
+    </div>
+</body>
+</html>
